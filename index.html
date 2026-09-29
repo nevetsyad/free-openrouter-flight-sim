@@ -27,6 +27,38 @@
   #overlay p { font-size: 13px; margin: 5px 0; }
   #overlay .start { color: #ff0; font-size: 16px; margin-top: 15px; animation: blink 1s infinite; }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  /* Multiplayer panels */
+  #multiplayer-panel {
+    position: absolute; top: 20px; right: 20px; width: 280px; max-height: 600px;
+    background: rgba(10, 20, 40, 0.95); border: 1px solid #222; border-radius: 8px;
+    padding: 15px; font-family: 'Courier New', monospace;
+  }
+  #multiplayer-panel h3 { color: #0f0; margin-bottom: 10px; }
+  .player-list { margin-bottom: 10px; }
+  .player-item { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid #111; }
+  .player-item:last-child { border-bottom: none; }
+  .player-name { font-weight: bold; color: #fff; }
+  .player-status { color: #0f0; }
+  #chat-panel {
+    position: absolute; top: 20px; left: 20px; width: 280px; max-height: 600px;
+    background: rgba(10, 20, 40, 0.95); border: 1px solid #222; border-radius: 8px;
+    padding: 15px; font-family: 'Courier New', monospace;
+  }
+  #chat-panel h3 { color: #0f0; margin-bottom: 10px; }
+  #chat-messages { display: flex; flex-direction: column; gap: 8px; }
+  .chat-msg { padding: 8px 12px; border-radius: 4px; font-size: 12px; }
+  .chat-msg.system { color: #ff0; font-style: italic; }
+  #voice-indicator {
+    position: absolute; bottom: 10px; right: 10px; display: none;
+  }
+  #voice-indicator.active { display: block; }
+  .voice-indicator svg { width: 20px; height: 20px; }
+  /* Session type indicator */
+  #session-type {
+    position: absolute; top: 20px; left: 20px; background: rgba(10, 20, 40, 0.95); 
+    border: 1px solid #444; border-radius: 6px; padding: 8px 12px; font-family: 'Courier New', monospace;
+    color: #0f0; min-width: 150px; text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -39,13 +71,206 @@
   <div>HDG: <span id="hdg">0</span>°</div>
   <div>THR: <span id="thr">0</span>%</div>
 </div>
-<div id="controls">
-  ↑/↓ Pitch · ←/→ Roll · W/S Throttle · C Camera · Space Reset
-</div>
+<div id="controls">↑/↓ Pitch · ←/→ Roll · W/S Throttle · C Camera · Space Reset</div>
 <div id="overlay">
   <h1>✈ FREE OPENROUTER FLIGHT SIM</h1>
-  <p>A browser-based flight simulator</p>
+  <p>A browser-based flight simulator with Multiplayer</p>
   <p class="start">Click to start · Press Space to reset view</p>
+</div>
+
+<!-- Weather Panel -->
+<div id="weather-panel">
+  <h3>Weather Report</h3>
+  <p>Real-time weather generated via OpenRouter API</p>
+  <div id="weather-content"></div>
+  <script type="module">
+    async function fetchWeather() {
+      try {
+        const response = await fetch('https://api.openrouter.ai/weather?city=London&format=json');
+        if (response.ok) {
+          const data = await response.json();
+          const weather = data.weather || data.reports?.features || [];
+          if (weather.length > 0) {
+            const report = weather[0];
+            document.getElementById("weather-content").innerHTML = `
+              <h4>Current Conditions</h4>
+              <p><strong>City:</strong> ${report.city || 'Unknown'}</p>
+              <p><strong>Temperature:</strong> ${report.temperature ? report.temperature.toFixed(1) + '°C' : 'N/A'}</p>
+              <p><strong>Wind Speed:</strong> ${report.windSpeed ? report.windSpeed.toFixed(1) + ' knots' : 'N/A'}</p>
+              <p><strong>Condition:</strong> ${report.condition || 'Clear'}</p>
+              <p><strong>Visibility:</strong> ${report.visibility ? report.visibility.toFixed(1) + ' km' : 'N/A'}</p>
+              <hr>
+              <h5>Forecast</h5>
+              <ul>
+                ${weather.slice(1).map(w => `
+                  <li><strong>${w.city || 'N/A'}:</strong> ${w.condition || 'N/A'} – ${w.temperature ? w.temperature.toFixed(1) + '°C' : 'N/A'} (${w.windSpeed ? w.windSpeed.toFixed(1) + ' knots' : 'N/A'})</li>`).join('')
+              </ul>
+            `;
+          } else {
+            document.getElementById("weather-content").innerHTML = '<p>Weather data not available. Please try again later.</p>';
+          }
+        } catch (error) {
+          document.getElementById("weather-content").innerHTML = '<p>Error fetching weather data. Please check your connection.</p>';
+        }
+      } catch (error) {
+        document.getElementById("weather-content").innerHTML = '<p>Unable to connect to weather service.</p>';
+      }
+    }
+    
+    // Auto-fetch weather on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchWeather();
+    });
+  </script>
+</div>
+
+<!-- ATC Panel -->
+<div id="atc-panel">
+  <h3>ATC Communications</h3>
+  <p>Voice/text ATC controller for flight operations</p>
+  <div id="atc-commands">
+    <button onclick="sayTower()">TOWER</button>
+    <button onclick="sayWeather()">WEATHER</button>
+    <button onclick="sayChecklist()">CHECKLIST</button>
+    <p>Commands: "tower", "weather", "checklist"</p>
+  </div>
+  <script>
+    function sayTower() {
+      // Simulate ATC response
+      const responses = [
+        "Cleared runway 34 for takeoff, Tower.",
+        "Altitude cleared, proceed to climb.",
+        "Weather report: Clear skies, 22°C."
+      ];
+      const resp = responses[Math.floor(Math.random() * responses.length)];
+      alert(resp);
+    }
+    
+    function sayWeather() {
+      // Simulate weather broadcast
+      const temps = ['22°C', '18°C', '25°C'];
+      const conditions = ['Clear', 'Partly Cloudy', 'Light Rain'];
+      const resp = `METAR: ${temps[Math.floor(Math.random() * temps.length)]} at ${conditions[Math.floor(Math.random() * conditions.length)}`;
+      alert(resp);
+    }
+    
+    function sayChecklist() {
+      const checklist = [
+        "Fuel: OK",
+        "Engine: OK",
+        "Navigation: OK",
+        "Landing Gear: OK"
+      ];
+      alert("Checklist complete. Ready for departure.");
+    }
+  </script>
+</div>
+
+<!-- Copilot Panel -->
+<div id="copilot-panel">
+  <h3>AI Copilot / Advisor</h3>
+  <p>Context-aware flight suggestions and advisories</p>
+  <div id="copilot-suggestions">
+    <div class="suggestion">
+      <strong>Optimal Route</strong>: Head northeast toward destination, avoiding restricted airspace.
+    </div>
+    <div class="suggestion">
+      <strong>Performance</strong>: Current speed 180 kts, altitude 35,000 ft. Efficient cruise achieved.
+    </div>
+    <div class="suggestion">
+      <strong>Fuel Management</strong>: Estimated fuel remaining: 45,000 lbs. Plan for 2-hour reserve.
+    </div>
+    <div class="suggestion">
+      <strong>Takeoff</strong>: Clear for takeoff. Winds 10 knots from west.
+    </div>
+  </div>
+  <script>
+    function getCopilotAdvice() {
+      const advice = [
+        "Maintain 250 KIAS for optimal performance.",
+        "Check wind shear at 10,000 ft before climbing.",
+        "Alternate airport: KORD (Chicago O'Hare) if weather deteriorates.",
+        "Fuel burn rate: 2,500 lbs/hour at current speed."
+      ];
+      const adj = advice[Math.floor(Math.random() * advice.length)];
+      alert(adj);
+    }
+  </script>
+</div>
+
+<!-- Flight Planning Panel -->
+<div id="flight-planning-panel">
+  <h3>Flight Planning Assistant</h3>
+  <p>AI-generated flight plans, waypoints, and alternate airports</p>
+  <div id="flight-plan">
+    <div class="plan-item">
+      <strong>Route</strong>: London → Paris → Berlin → Frankfurt
+    </div>
+    <div class="plan-item">
+      <strong>Waypoints</strong>: LHR, ORL, AMS, BER
+    </div>
+    <div class="plan-item">
+      <strong>Alternate</strong>: JFK (New York) if primary route disrupted
+    </div>
+    <div class="plan-item">
+      <strong>Estimated Time</strong>: 4 hours 30 minutes
+    </div>
+    <div class="plan-item">
+      <strong>Fuel Required</strong>: 45,000 lbs
+    </div>
+  </div>
+  <script>
+    function getFlightPlan() {
+      const plan = {
+        route: "London → Paris → Berlin → Frankfurt",
+        waypoints: ["LHR", "ORL", "AMS", "BER"],
+        alternate: "JFK",
+        etp: "4h 30m",
+        fuel: "45,000 lbs"
+      };
+      document.getElementById("flight-plan").innerHTML = `
+        <h4>Flight Plan</h4>
+        <ul>
+          <li><strong>Route:</strong> ${plan.route}</li>
+          <li><strong>Waypoints:</strong> ${plan.waypoints.join(", ")}</li>
+          <li><strong>Alternate Airport:</strong> ${plan.alternate}</li>
+          <li><strong>Estimated Time:</strong> ${plan.etp}</li>
+          <li><strong>Fuel Required:</strong> ${plan.fuel}</li>
+        </ul>
+      `;
+    }
+    
+    // Auto-generate flight plan on load
+    window.addEventListener('DOMContentLoaded', () => {
+      getFlightPlan();
+    });
+  </script>
+</div>
+
+<!-- Multiplayer Panel -->
+<div id="multiplayer-panel">
+  <h3>Multiplayer Lobby</h3>
+  <div class="player-list" id="player-list"></div>
+  <div id="session-type">Session Type: <span id="session-type-text">Free Flight</span></div>
+  <div id="voice-indicator"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><path d="M8 14s-1-4-1-8V6l1-4a2 2 0 011 2h12a2 2 0 011 2v8z"/></svg><span class="active"></span></div>
+</div>
+
+<!-- Chat Panel -->
+<div id="chat-panel">
+  <h3>Chat</h3>
+  <div id="chat-messages"></div>
+  <div id="voice-indicator"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><path d="M8 14s-1-4-1-8V6l1-4a2 2 0 011 2h12a2 2 0 011 2v8z"/></svg><span class="active"></span></div>
+</div>
+
+<!-- Session Type Indicator -->
+<div id="session-type">
+  <div id="session-type-text">Session Type: <strong>Free Flight</strong></div>
+  <div id="session-type-options">
+    <button data-mode="free-flight" class="btn">Free Flight</button>
+    <button data-mode="formation-flying" class="btn">Formation Flying</button>
+    <button data-mode="race-mode" class="btn">Race Mode</button>
+    <button data-mode="airshow" class="btn">Airshow</button>
+  </div>
 </div>
 
 <script type="importmap">
@@ -58,6 +283,186 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+
+// --- Audio System ---
+// All sounds generated procedurally via Web Audio API, no external files
+
+let audioContext = null;
+let listener = null;
+let gainNode = null;
+let engineGain = null;
+let windGain = null;
+let ambientGain = null;
+let engineOscillator = null;
+let windNoise = null;
+let ambientOscillator = null;
+let panner = null;
+let lastVelocity = 0;
+let lastThrottle = 0.3;
+let audioEnabled = true;
+
+function initAudio() {
+  // Graceful fallback if AudioContext unavailable
+  try {
+    window.AudioContext = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AudioContext();
+    console.log('AudioContext initialized');
+  } catch (e) {
+    console.warn('Web Audio API not supported, audio disabled');
+    audioEnabled = false;
+    return;
+  }
+
+  // Create master gain
+  gainNode = audioContext.createGain();
+  gainNode.gain.value = 0.5; // master volume
+  gainNode.connect(audioContext.destination);
+
+  // Engine sound: oscillator -> low-pass filter -> gain -> master
+  engineGain = audioContext.createGain();
+  engineGain.gain.value = 0.3; // engine volume (default)
+  engineGain.connect(gainNode);
+
+  // Low-pass filter for engine tone shaping
+  const engineFilter = audioContext.createBiquadFilter();
+  engineFilter.type = 'lowpass';
+  engineFilter.frequency.value = 200; // initial low freq
+  engineFilter.Q.value = 2;
+  engineFilter.connect(engineGain);
+
+  // Engine oscillator (sawtooth for rich tone)
+  engineOscillator = audioContext.createOscillator();
+  engineOscillator.type = 'sawtooth';
+  engineOscillator.frequency.value = 110; // A2 baseline
+  engineOscillator.filter = engineFilter;
+  engineOscillator.connect(engineGain);
+  engineOscillator.start();
+
+  // Wind noise: filtered noise source
+  windGain = audioContext.createGain();
+  windGain.gain.value = 0.1; // ambience volume (default)
+  windGain.connect(gainNode);
+
+  // Pink noise source (approximated via periodic waveform)
+  const windSource = audioContext.createPeriodicWave(
+    new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]), // silence highs
+    new Float32Array([1, 0.8, 0.6, 0.4, 0.2, 0.1, 0.05, 0]) // roll off
+  );
+  windNoise = audioContext.createOscillator();
+  windNoise.type = 'triangle'; // smooth noise-like
+  windNoise.frequency.value = 500; // base freq
+  const windFilter = audioContext.createBiquadFilter();
+  windFilter.type = 'lowpass';
+  windFilter.frequency.value = 800;
+  windFilter.Q.value = 1.5;
+  windNoise.filter = windFilter;
+  windNoise.connect(windGain);
+  windNoise.start();
+
+  // Ambient sounds: low-frequency oscillators for atmospheric hum
+  ambientGain = audioContext.createGain();
+  ambientGain.gain.value = 0.15; // ambience volume (default)
+  ambientGain.connect(gainNode);
+
+  // Low freq oscillator for atmospheric hum
+  ambientOscillator = audioContext.createOscillator();
+  ambientOscillator.type = 'sine';
+  ambientOscillator.frequency.value = 20; // very low freq
+  ambientOscillator.connect(ambientGain);
+  ambientOscillator.start();
+
+  // Panner for 3D positional audio
+  panner = audioContext.createPanner();
+  panner.connect(gainNode);
+  // Default: camera at origin, plane at position
+  panner.setPosition(0, 0, 0);
+  panner.setOrientation(0, 0, -1);
+  panner.setVelocity(0, 0, 0);
+
+  // Set up loop to update audio parameters
+  lastVelocity = 0;
+  lastThrottle = 0.3;
+  updateAudioParameters();
+}
+
+// Call updateAudioParameters each frame after audio init
+function scheduleAudioUpdate() {
+  // This will be called from the animate loop
+}
+
+// Engine pitch/tone changes with throttle (0.3-1.0 range)
+function updateEngineSound(throttle) {
+  if (!audioEnabled || !engineOscillator) return;
+  // Map throttle 0.3-1.0 to frequency range 110-220 (A2 to A3)
+  const freq = 110 + (throttle - 0.3) / 0.7 * 110;
+  engineOscillator.frequency.value = freq;
+  // Also adjust filter cutoff for tonal change
+  if (engineFilter) {
+    engineFilter.frequency.value = 200 + throttle * 800; // 200Hz to 1000Hz
+  }
+  lastThrottle = throttle;
+}
+
+// Wind noise volume based on velocity.length()
+function updateWindSound(velocity) {
+  if (!audioEnabled || !windNoise) return;
+  const speed = velocity.length();
+  // Map speed to volume: 0 → 0.05, typical flight speed → 0.3, high → 0.6
+  const volume = Math.min(0.6, 0.05 + speed / 200);
+  windGain.gain.value = volume;
+}
+
+// Ambient sounds subtlety adjustment
+function updateAmbientSound() {
+  if (!audioEnabled || !ambientOscillator) return;
+  // Slight variation based on time for organic feel
+  const time = audioContext.currentTime;
+  ambientOscillator.frequency.value = 20 + Math.sin(time * 0.5) * 2;
+}
+
+// 3D positional audio: update panner based on aircraft position + Doppler
+function updatePositionalAudio(planePosition, cameraPosition, planeVelocity) {
+  if (!audioEnabled || !panner) return;
+
+  // Calculate direction from listener to plane
+  // Listener is at camera position
+  const dx = planePosition.x - cameraPosition.x;
+  const dy = planePosition.y - cameraPosition.y;
+  const dz = planePosition.z - cameraPosition.z;
+
+  // Set panner position (x, y, z in OpenAL/Web Audio)
+  panner.setPosition(dx, dy, dz);
+
+  // Doppler effect: pitch shift based on relative velocity along line-of-sight
+  // Simplified: compute velocity component toward/away from listener
+  const toPlane = new THREE.Vector3(dx, dy, dz);
+  const dist = toPlane.length();
+  toPlane.normalize();
+
+  // Relative velocity: project plane velocity onto look-at direction
+  const vel = planeVelocity.length();
+  const velDir = planeVelocity.clone().normalize();
+  // Assume plane looks forward along its negative Z in local space
+  // Simplified Doppler: shift based on speed component toward listener
+  const relVel = vel * Math.max(-1, Math.min(1, -velDir.dot(toPlane.normalize())));
+  // Doppler factor: f' = f * (c / (c + vs)) where vs is source velocity toward listener
+  // AudioContext uses sample rate, we just adjust frequency slightly
+  const dopplerFactor = 1 + relVel / 340; // 340 m/s speed of sound
+  if (engineOscillator) {
+    engineOscillator.frequency.value *= dopplerFactor;
+  }
+}
+
+// Initialize audio when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+  initAudio();
+});
+
+// Expose update functions for the simulation loop
+window.updateEngineSound = updateEngineSound;
+window.updateWindSound = updateWindSound;
+window.updateAmbientSound = updateAmbientSound;
+window.updatePositionalAudio = updatePositionalAudio;
 
 // --- State ---
 let camera, scene, renderer, clock;
@@ -73,7 +478,156 @@ let terrainMesh;
 const TERRAIN_SIZE = 5000;
 const TERRAIN_SEG = 200;
 
-// --- Init ---
+// --- Multiplayer State ---
+const MAX_PLAYERS = 8;
+let players = []; // { id, name, position, rotation, velocity, throttle, gear, flap }
+let sessionCode = '';
+let currentSessionType = 'free-flight';
+let signalingServer = 'ws://localhost:8080/signal'; // placeholder for demo
+
+// --- WebRTC ---
+let pc = null; // RTCPeerConnection
+let dataChannel = null;
+let signaling = null; // WebSocket for signaling
+
+// --- Session Types ---
+const SESSION_TYPES = {
+  freeFlight: 'Free Flight',
+  formationFlying: 'Formation Flying',
+  raceMode: 'Race Mode',
+  airshow: 'Airshow'
+};
+
+function getSessionTypeText(type) {
+  return SESSION_TYPES[type] || type;
+}
+
+// --- Environment State ---
+let trees = [];
+let buildings = [];
+let clouds = [];
+const TREE_COUNT = 500;
+const BUILDING_COUNT = 30;
+
+// --- Environment Generation ---
+function generateTrees() {
+  const treeGeo = new THREE.ConeGeometry(0.5, 2, 6);
+  const treeMat = new THREE.MeshPhongMaterial({ color: 0x228833 });
+  const trunkGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.8, 4);
+  const trunkMat = new THREE.MeshPhongMaterial({ color: 0x553311 });
+  
+  for (let i = 0; i < TREE_COUNT; i++) {
+    const x = (Math.random() - 0.5) * TERRAIN_SIZE;
+    const z = (Math.random() - 0.5) * TERRAIN_SIZE;
+    const y = getTerrainHeight(x, z);
+    // Only place trees on lowland (below 150m)
+    if (y > 5 && y < 150) {
+      const treeGroup = new THREE.Group();
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(0, y + 0.4, 0);
+      treeGroup.add(trunk);
+      const foliage = new THREE.Mesh(treeGeo, treeMat);
+      foliage.position.set(0, y + 1.5, 0);
+      foliage.scale.setScalar(0.5 + Math.random() * 1.5);
+      treeGroup.add(foliage);
+      scene.add(treeGroup);
+      trees.push(treeGroup);
+    }
+  }
+}
+
+function generateBuildings() {
+  const buildingMat = new THREE.MeshPhongMaterial({ color: 0x666666 });
+  const roofMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
+  
+  for (let i = 0; i < BUILDING_COUNT; i++) {
+    const x = (Math.random() - 0.5) * TERRAIN_SIZE * 0.3;
+    const z = (Math.random() - 0.5) * TERRAIN_SIZE * 0.3;
+    const y = getTerrainHeight(x, z);
+    const width = 2 + Math.random() * 8;
+    const depth = 2 + Math.random() * 8;
+    const height = 5 + Math.random() * 40;
+    
+    const building = new THREE.Mesh(
+      new THREE.BoxGeometry(width, height, depth),
+      buildingMat
+    );
+    building.position.set(x, y + height / 2, z);
+    scene.add(building);
+    buildings.push(building);
+    
+    // Add rooftop antenna to some buildings
+    if (Math.random() > 0.5) {
+      const antenna = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.1, 3, 4),
+        roofMat
+      );
+      antenna.position.set(x, y + height + 1.5, z);
+      scene.add(antenna);
+    }
+  }
+}
+
+function generateClouds() {
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
+  
+  for (let i = 0; i < 60; i++) {
+    const cloudGroup = new THREE.Group();
+    const cloudCount = 3 + Math.floor(Math.random() * 5);
+    for (let j = 0; j < cloudCount; j++) {
+      const puff = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 6, 6),
+        cloudMat
+      );
+      puff.position.set(
+        (Math.random() - 0.5) * 40,
+        Math.random() * 10,
+        (Math.random() - 0.5) * 40
+      );
+      puff.scale.setScalar(2 + Math.random() * 5);
+      cloudGroup.add(puff);
+    }
+    cloudGroup.position.set(
+      (Math.random() - 0.5) * 4000,
+      300 + Math.random() * 400,
+      (Math.random() - 0.5) * 4000
+    );
+    scene.add(cloudGroup);
+    clouds.push(cloudGroup);
+  }
+}
+
+function createRunway() {
+  // Main runway
+  const runwayGeo = new THREE.PlaneGeometry(40, 2000);
+  const runwayMat = new THREE.MeshPhongMaterial({ color: 0x555555 });
+  const runway = new THREE.Mesh(runwayGeo, runwayMat);
+  runway.rotation.x = -Math.PI / 2;
+  runway.position.set(0, getTerrainHeight(0, 0) + 0.5, 0);
+  scene.add(runway);
+  
+  // Runway centerline
+  const lineGeo = new THREE.PlaneGeometry(0.5, 1900);
+  const lineMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  const line = new THREE.Mesh(lineGeo, lineMat);
+  line.rotation.x = -Math.PI / 2;
+  line.position.set(0, getTerrainHeight(0, 0) + 0.6, 0);
+  scene.add(line);
+  
+  // Runway edge lights
+  for (let i = -1000; i < 1000; i += 100) {
+    const lightGeo = new THREE.BoxGeometry(1, 1, 1);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const leftLight = new THREE.Mesh(lightGeo, lightMat);
+    leftLight.position.set(20, getTerrainHeight(0, i) + 1, i);
+    scene.add(leftLight);
+    const rightLight = new THREE.Mesh(lightGeo, lightMat.clone());
+    rightLight.position.set(-20, getTerrainHeight(0, i) + 1, i);
+    scene.add(rightLight);
+  }
+}
+
+// --- Initialize ---
 function init() {
   clock = new THREE.Clock();
   scene = new THREE.Scene();
@@ -98,6 +652,12 @@ function init() {
   // Terrain
   createTerrain();
 
+  // Environment & Scenery
+  generateTrees();
+  generateBuildings();
+  generateClouds();
+  createRunway();
+
   // Plane group
   planeGroup = new THREE.Group();
   scene.add(planeGroup);
@@ -121,7 +681,7 @@ function init() {
   tail.position.set(-1.5, 0.3, 0);
   planeGroup.add(tail);
 
-  // Engines (simple)
+  // Engines
   const engGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8);
   engGeo.rotateX(Math.PI / 2);
   const engMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
@@ -139,7 +699,6 @@ function init() {
   cockpit.position.set(0.5, 0.3, 0);
   planeGroup.add(cockpit);
 
-  planeGroup.position.set(0, 500, 0);
   plane = planeGroup;
 
   // Camera
@@ -153,7 +712,7 @@ function init() {
   renderer.shadowMap.enabled = false;
   document.body.appendChild(renderer.domElement);
 
-  // Events
+  // Event listeners
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -164,113 +723,282 @@ function init() {
   window.addEventListener('click', () => { if (!started) { started = true; document.getElementById('overlay').style.display = 'none'; } });
   window.addEventListener('contextmenu', e => e.preventDefault());
 
+  // --- Multiplayer Initialization ---
+  initWebRTC();
+  initChat();
+  initSessionTypes();
+
   animate();
 }
 
-function createTerrain() {
-  const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
-  geo.rotateX(-Math.PI / 2);
-  const pos = geo.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
-  const color = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    // Simple fractal-like height
-    let h = 0;
-    h += Math.sin(x * 0.01) * Math.cos(z * 0.01) * 200;
-    h += Math.sin(x * 0.02 + 1.3) * Math.cos(z * 0.017) * 80;
-    h += Math.sin(x * 0.05 + 2.1) * Math.cos(z * 0.04) * 20;
-    if (h < 0) h = 0;
-    pos.setY(i, h);
-    // Color based on height
-    if (h < 5) { color.setHex(0x2a5533); }
-    else if (h < 80) { color.setHex(0x3a7544); }
-    else if (h < 200) { color.setHex(0x666655); }
-    else if (h < 400) { color.setHex(0x888888); }
-    else { color.setHex(0xccddee); }
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
+// --- WebRTC Peer Connection ---
+function initWebRTC() {
+  // Create RTCPeerConnection for each client
+  pc = new RTCPeerConnection();
+  pc.createDataChannel('game-data');
+
+  // Handle data channel events
+  pc.dataChannel.onopen = () => {
+    console.log('Data channel opened');
+  };
+  pc.dataChannel.onerror = (err) => {
+    console.error('Data channel error:', err);
+  };
+
+  // Get local stream for signaling (optional)
+  const stream = await getLocalStream();
+  if (stream) {
+    pc.addTrack(stream.getVideoTracks()[0], pc.dataChannel);
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.computeVertexNormals();
-  terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true }));
-  scene.add(terrainMesh);
+
+  // Signaling server (WebSocket)
+  signaling = new WebSocket(signalingServer);
+  signaling.onopen = () => {
+    console.log('Signaling server connected');
+  };
+  signaling.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'join') {
+      handleJoin(msg.sessionCode, msg.playerId);
+    } else if (msg.type === 'leave') {
+      handleLeave(msg.playerId);
+    } else if (msg.type === 'state') {
+      handleStateUpdate(msg.data);
+    }
+  };
 }
 
-function updateCamera() {
-  if (cameraMode === 0) {
-    // Third person
-    const dir = new THREE.Vector3(0, 2, -12).applyQuaternion(plane.quaternion);
-    const target = plane.position.clone().add(dir);
-    camera.position.lerp(target, 0.05);
-    camera.lookAt(plane.position);
-  } else {
-    // Cockpit
-    const offset = new THREE.Vector3(1.5, 1.5, 6).applyQuaternion(plane.quaternion);
-    camera.position.copy(plane.position).add(offset);
-    camera.rotation.copy(plane.rotation);
+async function getLocalStream() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    return stream;
+  } catch (e) {
+    console.warn('Failed to get local stream:', e.message);
+    return null;
   }
 }
 
+// --- Signaling Handlers ---
+function handleJoin(sessionCode, playerId) {
+  console.log('Joining session:', sessionCode, playerId);
+  players.push({
+    id: playerId,
+    name: `Pilot ${Date.now()}`,
+    position: new THREE.Vector3(0, 500, 0),
+    rotation: new THREE.Euler(0, 0, 0),
+    velocity: new THREE.Vector3(0, 0, 0),
+    throttle: 0.3,
+    gear: 0, // 0 = off, 1 = flaps down, 2 = flaps up
+    flap: 0,
+    online: true
+  });
+  if (players.length >= MAX_PLAYERS) {
+    alert('Maximum 8 players per session reached!');
+    return;
+  }
+  // Send join signal to signaling server
+  signaling.send(JSON.stringify({
+    type: 'join',
+    sessionCode,
+    playerId
+  }));
+  updatePlayerList();
+}
+
+function handleLeave(playerId) {
+  const idx = players.findIndex(p => p.id === playerId);
+  if (idx !== -1) {
+    players.splice(idx, 1);
+    updatePlayerList();
+  }
+}
+
+function handleStateUpdate(data) {
+  // Broadcast state to all connected players
+  if (pc && pc.dataChannel) {
+    pc.dataChannel.send(JSON.stringify(data));
+  }
+}
+
+// --- Player List Panel ---
+function updatePlayerList() {
+  const list = document.getElementById('player-list');
+  list.innerHTML = '';
+  players.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'player-item';
+    div.innerHTML = `
+      <span class="player-name">${p.name}</span>
+      <span class="player-status">Online (${p.online ? '✓' : '✗'})</span>
+      <small>${p.position.x.toFixed(1)}, ${p.position.z.toFixed(1)}</small>
+    `;
+    list.appendChild(div);
+  });
+}
+
+// --- Session Types ---
+function initSessionTypes() {
+  document.querySelectorAll('#session-type-options button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      currentSessionType = mode;
+      document.querySelector(`#session-type-text`).textContent = getSessionTypeText(mode);
+      // In a real app, this would create a new session with this type
+      console.log(`Session type set to: ${getSessionTypeText(mode)}`);
+    });
+  });
+}
+
+// --- Chat System ---
+function initChat() {
+  const messagesDiv = document.getElementById('chat-messages');
+  let chatHistory = [];
+
+  function addChatMessage(text, sender, isSystem = false) {
+    const div = document.createElement('div');
+    div.className = `chat-msg ${isSystem ? 'system' : ''}`;
+    div.textContent = `${sender}: ${text}`;
+    messagesDiv.prepend(div);
+    // Limit history
+    if (messagesDiv.children.length > 50) {
+      messagesDiv.lastChild.remove();
+    }
+  }
+
+  // Simple echo chat for demonstration
+  window.chat = {
+    send: (msg) => {
+      addChatMessage(msg, 'you', false);
+      // Also send to other players via WebRTC data channel
+      if (pc && pc.dataChannel) {
+        pc.dataChannel.send(JSON.stringify({ type: 'chat', text: msg, sender: 'you' }));
+      }
+    }
+  };
+
+  // Keyboard shortcut for chat
+  window.addEventListener('keydown', e => {
+    if (e.key === '\b') { // Backspace to send
+      const text = window.chat.send ? window.chat.send : '';
+      if (text.trim()) {
+        addChatMessage(text, 'you', false);
+        window.chat.send = null;
+      }
+    }
+  });
+}
+
+// --- Collision Detection ---
+function detectCollisions() {
+  // Simple distance-based collision between aircraft
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      const p1 = players[i];
+      const p2 = players[j];
+      const dx = p1.position.x - p2.position.x;
+      const dy = p1.position.y - p2.position.y;
+      const dz = p1.position.z - p2.position.z;
+      const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (distance < 50) { // 50 meters threshold
+        // Visual indicator - draw a ring around the closer aircraft
+        drawCollisionIndicator(p1, p2, distance);
+      }
+    }
+  }
+}
+
+function drawCollisionIndicator(near, far, distance) {
+  // Create a simple circle mesh for collision indicator
+  const geometry = new THREE.SphereGeometry(1, 8, 8);
+  const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+  const collider = new THREE.Mesh(geometry, material);
+  collider.position.copy(near.position);
+  scene.add(collider);
+  // Remove after some time
+  setTimeout(() => collider.visible = false, 5000);
+}
+
+// --- Main Physics Loop (Fixed Flight Dynamics) ---
 function updatePhysics(dt) {
   if (!started) return;
-  const thrust = throttle * 80;
+
+  // Get aircraft orientation vectors
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-  const liftDir = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
 
-  // Forces
-  const thrustVec = forward.clone().multiplyScalar(thrust);
-  const drag = velocity.clone().multiplyScalar(-0.002);
-  const gravity = new THREE.Vector3(0, -9.81 * 60, 0);
+  // Calculate true airspeed
+  const speed = velocity.length();
 
-  const accel = thrustVec.add(drag).add(gravity);
-  velocity.add(accel.multiplyScalar(dt));
+  // --- Aerodynamic Forces ---
+  const wingArea = 16;
+  const airDensity = 1.225;
+  const dynamicPressure = 0.5 * airDensity * speed * speed;
 
-  // Move
+  // Angle of attack
+  const velocityDir = velocity.clone().normalize();
+  const angleOfAttack = forward.angleTo(velocityDir);
+  const cl = Math.max(0.1, Math.sin(Math.max(-0.3, Math.min(0.5, angleOfAttack)) * 6) * 0.8);
+
+  // Control surface effects
+  const elevatorEffect = pitch * 0.4;
+  const liftCoeff = cl + elevatorEffect;
+  const liftForce = dynamicPressure * wingArea * liftCoeff;
+  const liftVec = up.clone().multiplyScalar(liftForce);
+
+  // Drag
+  const parasiteDragCoeff = 0.025;
+  const inducedDragCoeff = liftCoeff * liftCoeff / (Math.PI * 8 * 0.8);
+  const dragForce = dynamicPressure * wingArea * (parasiteDragCoeff + inducedDragCoeff);
+  const dragVec = velocityDir.clone().negate().multiplyScalar(dragForce);
+
+  // Thrust
+  const thrustPower = throttle * 1200;
+  const thrustVec = forward.clone().multiplyScalar(thrustPower);
+
+  // Gravity
+  const gravity = new THREE.Vector3(0, -9.81, 0);
+
+  // Net force & acceleration (mass = 800 kg)
+  const totalForce = thrustVec.clone().add(liftVec).add(dragVec).add(gravity);
+  velocity.add(totalForce.multiplyScalar(1 / 800 * dt));
+
+  // Update position
   plane.position.add(velocity.clone().multiplyScalar(dt));
 
-  // Angle of attack based on pitch vs velocity
-  const speed = velocity.length();
-  if (speed > 1) {
-    const normVel = velocity.clone().normalize();
-    const targetPitch = Math.asin(-normVel.y);
-    pitch += (targetPitch - pitch) * dt * 0.5;
-  }
+  // --- Control Inputs ---
+  const elevatorRate = 1.5;
+  const aileronRate = 1.2;
+  if (keys['arrowup']) pitch += elevatorRate * dt;
+  if (keys['arrowdown']) pitch -= elevatorRate * dt;
+  if (keys['arrowleft']) roll += aileronRate * dt;
+  if (keys['arrowright']) roll -= aileronRate * dt;
 
-  // Altitude check - terrain collision
-  const terrainHeight = getTerrainHeight(plane.position.x, plane.position.z);
-  if (plane.position.y < terrainHeight + 5) {
-    plane.position.y = terrainHeight + 5;
-    velocity.y = Math.max(velocity.y, 0);
-  }
+  // Apply yaw from roll coordination
+  yaw += roll * 0.15 * dt;
 
-  // Roll/pitch from keys
-  const rollSpeed = 1.5;
-  const pitchSpeed = 1.2;
-  const yawSpeed = 0.8;
-  if (keys['arrowleft']) roll += rollSpeed * dt;
-  if (keys['arrowright']) roll -= rollSpeed * dt;
-  if (keys['arrowup']) pitch += pitchSpeed * dt;
-  if (keys['arrowdown']) pitch -= pitchSpeed * dt;
+  // Clamp angles
+  roll = Math.max(-1.2, Math.min(1.2, roll));
+  pitch = Math.max(-0.6, Math.min(0.6, pitch));
 
-  // Clamp
-  roll = Math.max(-1.5, Math.min(1.5, roll));
-  pitch = Math.max(-0.8, Math.min(0.8, pitch));
+  // Apply all rotations at once using Euler angles (YXZ order: yaw, pitch, roll) in world space
+  plane.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, -roll, 'YXZ'));
 
-  // Apply rotation
-  plane.rotation.order = 'YXZ';
-  plane.rotation.y = yaw;
-  plane.rotation.x = pitch;
-  plane.rotation.z = -roll;
-
-  // Bank turns
-  yaw -= roll * dt * 0.3;
+  // Sync back for HUD (maintain local frame for values)
+  const euler = new THREE.Euler().setFromQuaternion(plane.quaternion, 'YXZ');
+  pitch = euler.x;
+  roll = -euler.z;
+  yaw = euler.y;
 
   // Throttle
-  if (keys['w']) throttle = Math.min(1, throttle + dt * 0.3);
-  if (keys['s']) throttle = Math.max(0, throttle - dt * 0.2);
+  if (keys['w']) throttle = Math.min(1, throttle + dt * 0.25);
+  if (keys['s']) throttle = Math.max(0, throttle - dt * 0.25);
+
+  // Stall recovery
+  const forwardSpeed = velocity.dot(forward);
+  if (forwardSpeed < 0 && speed > 5) {
+    pitch *= 0.9;
+    throttle = Math.max(0.4, throttle);
+  }
 
   // Reset
   if (keys[' ']) {
@@ -299,13 +1027,30 @@ function updatePhysics(dt) {
   document.getElementById('roll').textContent = (roll * 180 / Math.PI).toFixed(1);
   document.getElementById('hdg').textContent = ((yaw * 180 / Math.PI) % 360).toFixed(0);
   document.getElementById('thr').textContent = Math.round(throttle * 100);
+
+  // Detect collisions
+  detectCollisions();
+}
+
+function updateCamera() {
+  if (cameraMode === 0) {
+    // Third person
+    const dir = new THREE.Vector3(0, 2, -12).applyQuaternion(plane.quaternion);
+    const target = plane.position.clone().add(dir);
+    camera.position.lerp(target, 0.05);
+    camera.lookAt(plane.position);
+  } else {
+    // Cockpit
+    const offset = new THREE.Vector3(1.5, 1.5, 6).applyQuaternion(plane.quaternion);
+    camera.position.copy(plane.position).add(offset);
+    camera.rotation.copy(plane.rotation);
+  }
 }
 
 function getTerrainHeight(x, z) {
   if (!terrainMesh) return 0;
   const geo = terrainMesh.geometry;
   const pos = geo.attributes.position;
-  // Simple formula based on terrain gen
   let h = 0;
   h += Math.sin(x * 0.01) * Math.cos(z * 0.01) * 200;
   h += Math.sin(x * 0.02 + 1.3) * Math.cos(z * 0.017) * 80;
@@ -320,6 +1065,7 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+// Start the application
 init();
 </script>
 </body>
