@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Free OpenRouter Flight Sim</title>
-<!-- flightsim-build:2026-09-29-v5 -->
+<!-- flightsim-build:2026-09-29-v6 -->
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
@@ -63,19 +63,15 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { resetFlightState, stepFlight, attitude } from './js/physics.js';
+const flight = resetFlightState();
 
-const BUILD = '2026-09-29-v5';
+const BUILD = '2026-09-29-v6';
 const TERRAIN_SIZE = 8000;
 const TERRAIN_SEG = 160;
 
 let camera, scene, renderer, clock;
 let plane;
-let velocity = new THREE.Vector3();
-let throttle = 0.62;
-let airspeed = 52;
-let pitch = 0.04, roll = 0, yaw = 0;
-let gearDown = true;
-let stalled = false;
 let cameraMode = 0;
 let keys = {};
 let started = false;
@@ -178,7 +174,7 @@ function createAircraft() {
   const addGear = (x, z, length) => {
     const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, length, 8), strutMat);
     strut.position.set(x, -length / 2, z);
-    strut.rotation.z = Math.PI / 2;
+
     group.add(strut);
     const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.055, 8, 16), wheelMat);
     wheel.position.set(x, -length - 0.04, z);
@@ -196,16 +192,6 @@ function createAircraft() {
   return group;
 }
 
-function applyAttitude() {
-  plane.rotation.order = 'YXZ';
-  // Three.js +X rotation pitches the nose down, so nose-up pitch is negated.
-  plane.rotation.set(-pitch, yaw, roll);
-}
-
-function forwardVector() {
-  return new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-}
-
 function updateCamera() {
   if (cameraMode === 0) {
     const dir = new THREE.Vector3(0, 2.2, 11).applyQuaternion(plane.quaternion);
@@ -219,117 +205,46 @@ function updateCamera() {
 }
 
 function setGear(down) {
-  gearDown = down;
+  flight.gearDown = down;
   if (plane?.userData.gearMeshes) {
-    plane.userData.gearMeshes.forEach(mesh => { mesh.visible = gearDown; });
+    plane.userData.gearMeshes.forEach(mesh => { mesh.visible = flight.gearDown; });
   }
   const gearEl = document.getElementById('gear');
-  if (gearEl) gearEl.textContent = gearDown ? 'DOWN' : 'UP';
+  if (gearEl) gearEl.textContent = flight.gearDown ? 'DOWN' : 'UP';
 }
 
+function syncAircraft() {
+  plane.position.copy(flight.position);
+  plane.quaternion.copy(flight.quaternion);
+}
 function resetFlight() {
-  plane.position.set(0, 220, 0);
-  pitch = 0.04;
-  roll = 0;
-  yaw = 0;
-  throttle = 0.62;
-  airspeed = 52;
+  resetFlightState(flight);
   setGear(true);
-  applyAttitude();
-  velocity.copy(forwardVector().multiplyScalar(airspeed));
+  syncAircraft();
   cameraMode = 0;
 }
-
-function wrapAngle(angle) {
-  return ((angle + Math.PI) % (Math.PI * 2)) - Math.PI;
-}
-
 function updatePhysics(dt) {
-  const pitchRate = 0.7;
-  const rollRate = 1.1;
-  if (keys['arrowup']) pitch += pitchRate * dt;
-  if (keys['arrowdown']) pitch -= pitchRate * dt;
-  // Right input produces a right bank; left/right also provide a coordinated turn.
-  if (keys['arrowleft']) roll += rollRate * dt;
-  if (keys['arrowright']) roll -= rollRate * dt;
-  if (!keys['arrowleft'] && !keys['arrowright']) roll *= Math.exp(-dt * 0.6);
-
-  // No attitude clamp: sustained inputs can perform loops and full rolls.
-  pitch = wrapAngle(pitch);
-  roll = wrapAngle(roll);
-  const turnInput = (keys['arrowleft'] ? 1 : 0) - (keys['arrowright'] ? 1 : 0);
-  yaw += turnInput * dt * 0.85 + Math.sin(roll) * dt * 0.18;
-  applyAttitude();
-
-  if (keys['w']) throttle = Math.min(1, throttle + dt * 0.28);
-  if (keys['s']) throttle = Math.max(0, throttle - dt * 0.28);
-  if (keys['g']) {
-    setGear(!gearDown);
-    keys['g'] = false;
-  }
-
-  const targetSpeed = 18 + throttle * 62;
-  const gearDrag = gearDown ? 0.88 : 1;
-  airspeed *= Math.pow(gearDrag, dt);
-  airspeed += (targetSpeed - airspeed) * Math.min(1, dt * 0.8);
-
-  const forward = forwardVector();
-  const speed = Math.max(0.1, velocity.length());
-  const velocityDir = velocity.clone().normalize();
-  const angleOfAttack = Math.abs(Math.asin(Math.max(-1, Math.min(1, velocityDir.dot(new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion))))));
-  stalled = airspeed < 25 || angleOfAttack > 0.42;
-
-  if (stalled) {
-    // Stall: lift collapses, speed bleeds, and the nose drops until the pilot unloads.
-    airspeed -= dt * (8 + Math.max(0, angleOfAttack - 0.42) * 20);
-    pitch -= dt * 0.48;
-  } else {
-    if (pitch > 0.15) airspeed -= pitch * dt * 4;
-    if (pitch < -0.05) airspeed += -pitch * dt * 3;
-  }
-  airspeed = Math.max(0, airspeed);
-
-  const desired = forward.clone().multiplyScalar(airspeed);
-  if (stalled) desired.y -= 14;
-  else if (airspeed < 32) desired.y -= (32 - airspeed) * 0.3;
-  velocity.lerp(desired, 1 - Math.exp(-dt * (stalled ? 1.2 : 2.4)));
-  plane.position.add(velocity.clone().multiplyScalar(dt));
-
-  const groundClearance = gearDown ? 2.15 : 0.85;
-  const ground = terrainHeightAt(plane.position.x, plane.position.z) + groundClearance;
-  if (plane.position.y <= ground) {
-    plane.position.y = ground;
-    if (velocity.y < 0) velocity.y = 0;
-    airspeed *= Math.pow(gearDown ? 0.985 : 0.94, dt * 60);
-    pitch = Math.max(pitch, 0.02);
-    if (airspeed < (gearDown ? 22 : 12)) {
-      velocity.multiplyScalar(0.96);
-      airspeed *= 0.96;
-    }
-  }
-
-  if (keys[' ']) {
-    resetFlight();
-    keys[' '] = false;
-  }
-  if (keys['c']) {
-    cameraMode = 1 - cameraMode;
-    keys['c'] = false;
-  }
-
-  const mToFt = 3.28084;
-  const mpsToKt = 1.94384;
-  document.getElementById('alt').textContent = Math.round(Math.max(0, plane.position.y) * mToFt);
-  document.getElementById('spd').textContent = Math.round(airspeed * mpsToKt);
-  document.getElementById('vs').textContent = Math.round(velocity.y * mToFt * 60);
-  document.getElementById('pitch').textContent = (wrapAngle(pitch) * 180 / Math.PI).toFixed(1);
-  document.getElementById('roll').textContent = (wrapAngle(roll) * 180 / Math.PI).toFixed(1);
-  let hdg = (-yaw * 180 / Math.PI) % 360;
-  if (hdg < 0) hdg += 360;
-  document.getElementById('hdg').textContent = hdg.toFixed(0);
-  document.getElementById('thr').textContent = Math.round(throttle * 100);
-  document.getElementById('gear').textContent = gearDown ? 'DOWN' : 'UP';
-  document.getElementById('stall').textContent = stalled ? 'YES' : 'NO';
+  if (keys[' ']) { resetFlight(); keys[' '] = false; }
+  if (keys['g']) { setGear(!flight.gearDown); keys['g'] = false; }
+  if (keys['c']) { cameraMode = 1 - cameraMode; keys['c'] = false; }
+  stepFlight(flight, {
+    pitch: Number(!!keys.arrowup) - Number(!!keys.arrowdown),
+    roll: Number(!!keys.arrowleft) - Number(!!keys.arrowright),
+    throttle: Number(!!keys.w) - Number(!!keys.s)
+  }, dt, terrainHeightAt);
+  syncAircraft();
+  const angles = attitude(flight);
+  const values = {
+    alt: Math.round(Math.max(0, flight.position.y) * 3.28084),
+    spd: Math.round(flight.airspeed * 1.94384),
+    vs: Math.round(flight.velocity.y * 3.28084 * 60),
+    pitch: (angles.pitch * 180 / Math.PI).toFixed(1),
+    roll: (angles.roll * 180 / Math.PI).toFixed(1),
+    hdg: (angles.heading * 180 / Math.PI).toFixed(0),
+    thr: Math.round(flight.throttle * 100),
+    gear: flight.gearDown ? 'DOWN' : 'UP', stall: flight.stalled ? 'YES' : 'NO'
+  };
+  for (const [id, value] of Object.entries(values)) document.getElementById(id).textContent = value;
 }
 
 function animate() {
@@ -365,9 +280,7 @@ function init() {
 
   createTerrain();
   plane = createAircraft();
-  setGear(true);
-  applyAttitude();
-  velocity.copy(forwardVector().multiplyScalar(airspeed));
+  resetFlight();
 
   camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.2, 20000);
   updateCamera();
@@ -388,6 +301,7 @@ function init() {
     tryStart();
   });
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+  window.addEventListener('blur', () => { keys = {}; });
   window.addEventListener('pointerdown', tryStart);
   overlay.addEventListener('pointerdown', (e) => { e.preventDefault(); tryStart(); });
 

@@ -1,0 +1,1 @@
+{"name":"free-openrouter-flight-sim","private":true,"type":"module","scripts":{"test":"node --test tests/physics.test.js"},"devDependencies":{"three":"0.160.0"}}
