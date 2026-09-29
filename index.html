@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Free OpenRouter Flight Sim</title>
-<!-- flightsim-build:2026-09-29-v4 -->
+<!-- flightsim-build:2026-09-29-v5 -->
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
@@ -43,8 +43,9 @@
   <div>HDG: <span id="hdg">0</span>°</div>
   <div>THR: <span id="thr">0</span>%</div>
   <div>GEAR: <span id="gear">DOWN</span></div>
+  <div>STALL: <span id="stall">NO</span></div>
 </div>
-<div id="controls">↑/↓ Pitch · ←/→ Roll · W/S Throttle · G Gear · C Camera · Space Reset</div>
+<div id="controls">↑/↓ Pitch/Loops · ←/→ Roll/Turn · W/S Throttle · G Gear · C Camera · Space Reset</div>
 <div id="overlay">
   <div class="card">
     <h1>✈ FREE OPENROUTER FLIGHT SIM</h1>
@@ -63,7 +64,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const BUILD = '2026-09-29-v4';
+const BUILD = '2026-09-29-v5';
 const TERRAIN_SIZE = 8000;
 const TERRAIN_SEG = 160;
 
@@ -74,6 +75,7 @@ let throttle = 0.62;
 let airspeed = 52;
 let pitch = 0.04, roll = 0, yaw = 0;
 let gearDown = true;
+let stalled = false;
 let cameraMode = 0;
 let keys = {};
 let started = false;
@@ -238,19 +240,25 @@ function resetFlight() {
   cameraMode = 0;
 }
 
+function wrapAngle(angle) {
+  return ((angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+}
+
 function updatePhysics(dt) {
   const pitchRate = 0.7;
   const rollRate = 1.1;
   if (keys['arrowup']) pitch += pitchRate * dt;
   if (keys['arrowdown']) pitch -= pitchRate * dt;
-  // Reversed roll mapping: left rolls left, right rolls right.
+  // Right input produces a right bank; left/right also provide a coordinated turn.
   if (keys['arrowleft']) roll += rollRate * dt;
   if (keys['arrowright']) roll -= rollRate * dt;
   if (!keys['arrowleft'] && !keys['arrowright']) roll *= Math.exp(-dt * 0.6);
 
-  pitch = Math.max(-0.7, Math.min(0.6, pitch));
-  roll = Math.max(-1.2, Math.min(1.2, roll));
-  yaw -= Math.sin(roll) * dt * 0.55;
+  // No attitude clamp: sustained inputs can perform loops and full rolls.
+  pitch = wrapAngle(pitch);
+  roll = wrapAngle(roll);
+  const turnInput = (keys['arrowleft'] ? 1 : 0) - (keys['arrowright'] ? 1 : 0);
+  yaw += turnInput * dt * 0.85 + Math.sin(roll) * dt * 0.18;
   applyAttitude();
 
   if (keys['w']) throttle = Math.min(1, throttle + dt * 0.28);
@@ -263,26 +271,34 @@ function updatePhysics(dt) {
   const targetSpeed = 18 + throttle * 62;
   const gearDrag = gearDown ? 0.88 : 1;
   airspeed *= Math.pow(gearDrag, dt);
-  const stalling = airspeed < 26 && pitch > 0.25;
-  airspeed += (targetSpeed - airspeed) * Math.min(1, dt * (stalling ? 0.35 : 0.8));
-  if (pitch > 0.15) airspeed -= pitch * dt * 6;
-  if (pitch < -0.05) airspeed += -pitch * dt * 4;
-  airspeed = Math.max(0, airspeed);
+  airspeed += (targetSpeed - airspeed) * Math.min(1, dt * 0.8);
 
   const forward = forwardVector();
-  const desired = forward.clone().multiplyScalar(airspeed);
-  if (stalling) desired.y -= 18;
-  else if (airspeed < 32) desired.y -= (32 - airspeed) * 0.35;
+  const speed = Math.max(0.1, velocity.length());
+  const velocityDir = velocity.clone().normalize();
+  const angleOfAttack = Math.abs(Math.asin(Math.max(-1, Math.min(1, velocityDir.dot(new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion))))));
+  stalled = airspeed < 25 || angleOfAttack > 0.42;
 
-  velocity.lerp(desired, 1 - Math.exp(-dt * 2.4));
+  if (stalled) {
+    // Stall: lift collapses, speed bleeds, and the nose drops until the pilot unloads.
+    airspeed -= dt * (8 + Math.max(0, angleOfAttack - 0.42) * 20);
+    pitch -= dt * 0.48;
+  } else {
+    if (pitch > 0.15) airspeed -= pitch * dt * 4;
+    if (pitch < -0.05) airspeed += -pitch * dt * 3;
+  }
+  airspeed = Math.max(0, airspeed);
+
+  const desired = forward.clone().multiplyScalar(airspeed);
+  if (stalled) desired.y -= 14;
+  else if (airspeed < 32) desired.y -= (32 - airspeed) * 0.3;
+  velocity.lerp(desired, 1 - Math.exp(-dt * (stalled ? 1.2 : 2.4)));
   plane.position.add(velocity.clone().multiplyScalar(dt));
 
   const groundClearance = gearDown ? 2.15 : 0.85;
   const ground = terrainHeightAt(plane.position.x, plane.position.z) + groundClearance;
   if (plane.position.y <= ground) {
     plane.position.y = ground;
-    // Gear-down landings settle onto the runway/terrain instead of bouncing.
-    // A belly landing is also survivable, but bleeds speed more aggressively.
     if (velocity.y < 0) velocity.y = 0;
     airspeed *= Math.pow(gearDown ? 0.985 : 0.94, dt * 60);
     pitch = Math.max(pitch, 0.02);
@@ -306,13 +322,14 @@ function updatePhysics(dt) {
   document.getElementById('alt').textContent = Math.round(Math.max(0, plane.position.y) * mToFt);
   document.getElementById('spd').textContent = Math.round(airspeed * mpsToKt);
   document.getElementById('vs').textContent = Math.round(velocity.y * mToFt * 60);
-  document.getElementById('pitch').textContent = (pitch * 180 / Math.PI).toFixed(1);
-  document.getElementById('roll').textContent = (roll * 180 / Math.PI).toFixed(1);
+  document.getElementById('pitch').textContent = (wrapAngle(pitch) * 180 / Math.PI).toFixed(1);
+  document.getElementById('roll').textContent = (wrapAngle(roll) * 180 / Math.PI).toFixed(1);
   let hdg = (-yaw * 180 / Math.PI) % 360;
   if (hdg < 0) hdg += 360;
   document.getElementById('hdg').textContent = hdg.toFixed(0);
   document.getElementById('thr').textContent = Math.round(throttle * 100);
   document.getElementById('gear').textContent = gearDown ? 'DOWN' : 'UP';
+  document.getElementById('stall').textContent = stalled ? 'YES' : 'NO';
 }
 
 function animate() {
@@ -375,7 +392,7 @@ function init() {
   overlay.addEventListener('pointerdown', (e) => { e.preventDefault(); tryStart(); });
 
   ready = true;
-  overlay.querySelector('p').textContent = 'Nose follows the stick. Pull up to climb.';
+  overlay.querySelector('p').textContent = 'Hold ↑ for loops, ←/→ for rolls and 360° turns. Avoid low-speed stalls.';
   startMsg.textContent = 'Click or press any key to fly';
   console.log('flight sim ready', BUILD);
   animate();
