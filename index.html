@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Free OpenRouter Flight Sim</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+  canvas { display: block; }
+  #hud {
+    position: absolute; top: 10px; left: 10px; color: #0f0;
+    background: rgba(0,0,0,0.7); padding: 10px 15px; border-radius: 5px;
+    font-size: 13px; line-height: 1.6; pointer-events: none;
+  }
+  #controls {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    color: #aaa; background: rgba(0,0,0,0.7); padding: 8px 15px; border-radius: 5px;
+    font-size: 11px; pointer-events: none; white-space: nowrap;
+  }
+  #overlay {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    color: #0f0; background: rgba(0,0,0,0.9); padding: 30px 40px; border-radius: 8px;
+    text-align: center; pointer-events: none;
+  }
+  #overlay h1 { font-size: 24px; margin-bottom: 10px; color: #fff; }
+  #overlay p { font-size: 13px; margin: 5px 0; }
+  #overlay .start { color: #ff0; font-size: 16px; margin-top: 15px; animation: blink 1s infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div>ALT: <span id="alt">0</span> ft</div>
+  <div>SPD: <span id="spd">0</span> kts</div>
+  <div>VS: <span id="vs">0</span> fpm</div>
+  <div>PITCH: <span id="pitch">0</span>°</div>
+  <div>ROLL: <span id="roll">0</span>°</div>
+  <div>HDG: <span id="hdg">0</span>°</div>
+  <div>THR: <span id="thr">0</span>%</div>
+</div>
+<div id="controls">
+  ↑/↓ Pitch · ←/→ Roll · W/S Throttle · C Camera · Space Reset
+</div>
+<div id="overlay">
+  <h1>✈ FREE OPENROUTER FLIGHT SIM</h1>
+  <p>A browser-based flight simulator</p>
+  <p class="start">Click to start · Press Space to reset view</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// --- State ---
+let camera, scene, renderer, clock;
+let plane, planeGroup;
+let velocity = new THREE.Vector3(0, 0, 0);
+let angVel = new THREE.Vector3(0, 0, 0);
+let throttle = 0.3;
+let pitch = 0, roll = 0, yaw = 0;
+let cameraMode = 0; // 0 = third-person, 1 = cockpit
+let keys = {};
+let started = false;
+let terrainMesh;
+const TERRAIN_SIZE = 5000;
+const TERRAIN_SEG = 200;
+
+// --- Init ---
+function init() {
+  clock = new THREE.Clock();
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x88aacc, 0.0003);
+
+  // Sky gradient
+  const skyGeo = new THREE.SphereGeometry(8000, 32, 32);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { topColor: { value: new THREE.Color(0x2244aa) }, bottomColor: { value: new THREE.Color(0x88ccff) } },
+    vertexShader: `varying vec3 vWorldPos; void main() { vWorldPos = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vWorldPos; void main() { float h = normalize(vWorldPos).y; gl_FragColor = vec4(mix(bottomColor, topColor, max(0.0, h)), 1.0); }`
+  });
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+  // Sun light
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  sun.position.set(1000, 2000, 500);
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0x88aacc, 0x445522, 0.4));
+
+  // Terrain
+  createTerrain();
+
+  // Plane group
+  planeGroup = new THREE.Group();
+  scene.add(planeGroup);
+
+  // Fuselage
+  const fuselageGeo = new THREE.CylinderGeometry(0.3, 0.25, 4, 8);
+  fuselageGeo.rotateX(Math.PI / 2);
+  const fuselageMat = new THREE.MeshPhongMaterial({ color: 0xcccccc });
+  const fuselage = new THREE.Mesh(fuselageGeo, fuselageMat);
+  planeGroup.add(fuselage);
+
+  // Wings
+  const wingGeo = new THREE.BoxGeometry(5, 0.05, 1.2);
+  const wing = new THREE.Mesh(wingGeo, fuselageMat);
+  wing.position.set(0, 0, 0);
+  planeGroup.add(wing);
+
+  // Tail
+  const tailGeo = new THREE.BoxGeometry(1.5, 0.05, 1);
+  const tail = new THREE.Mesh(tailGeo, fuselageMat);
+  tail.position.set(-1.5, 0.3, 0);
+  planeGroup.add(tail);
+
+  // Engines (simple)
+  const engGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8);
+  engGeo.rotateX(Math.PI / 2);
+  const engMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+  const engL = new THREE.Mesh(engGeo, engMat);
+  engL.position.set(0, -0.3, 1.2);
+  planeGroup.add(engL);
+  const engR = new THREE.Mesh(engGeo, engMat);
+  engR.position.set(0, -0.3, -1.2);
+  planeGroup.add(engR);
+
+  // Cockpit
+  const cockGeo = new THREE.BoxGeometry(0.8, 0.5, 1.2);
+  const cockMat = new THREE.MeshPhongMaterial({ color: 0x88ccff, transparent: true, opacity: 0.6 });
+  const cockpit = new THREE.Mesh(cockGeo, cockMat);
+  cockpit.position.set(0.5, 0.3, 0);
+  planeGroup.add(cockpit);
+
+  planeGroup.position.set(0, 500, 0);
+  plane = planeGroup;
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 20000);
+  updateCamera();
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = false;
+  document.body.appendChild(renderer.domElement);
+
+  // Events
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+  window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key === ' ') e.preventDefault(); });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  window.addEventListener('click', () => { if (!started) { started = true; document.getElementById('overlay').style.display = 'none'; } });
+  window.addEventListener('contextmenu', e => e.preventDefault());
+
+  animate();
+}
+
+function createTerrain() {
+  const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  const color = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    // Simple fractal-like height
+    let h = 0;
+    h += Math.sin(x * 0.01) * Math.cos(z * 0.01) * 200;
+    h += Math.sin(x * 0.02 + 1.3) * Math.cos(z * 0.017) * 80;
+    h += Math.sin(x * 0.05 + 2.1) * Math.cos(z * 0.04) * 20;
+    if (h < 0) h = 0;
+    pos.setY(i, h);
+    // Color based on height
+    if (h < 5) { color.setHex(0x2a5533); }
+    else if (h < 80) { color.setHex(0x3a7544); }
+    else if (h < 200) { color.setHex(0x666655); }
+    else if (h < 400) { color.setHex(0x888888); }
+    else { color.setHex(0xccddee); }
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true }));
+  scene.add(terrainMesh);
+}
+
+function updateCamera() {
+  if (cameraMode === 0) {
+    // Third person
+    const dir = new THREE.Vector3(0, 2, -12).applyQuaternion(plane.quaternion);
+    const target = plane.position.clone().add(dir);
+    camera.position.lerp(target, 0.05);
+    camera.lookAt(plane.position);
+  } else {
+    // Cockpit
+    const offset = new THREE.Vector3(1.5, 1.5, 6).applyQuaternion(plane.quaternion);
+    camera.position.copy(plane.position).add(offset);
+    camera.rotation.copy(plane.rotation);
+  }
+}
+
+function updatePhysics(dt) {
+  if (!started) return;
+  const thrust = throttle * 80;
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
+  const liftDir = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
+
+  // Forces
+  const thrustVec = forward.clone().multiplyScalar(thrust);
+  const drag = velocity.clone().multiplyScalar(-0.002);
+  const gravity = new THREE.Vector3(0, -9.81 * 60, 0);
+
+  const accel = thrustVec.add(drag).add(gravity);
+  velocity.add(accel.multiplyScalar(dt));
+
+  // Move
+  plane.position.add(velocity.clone().multiplyScalar(dt));
+
+  // Angle of attack based on pitch vs velocity
+  const speed = velocity.length();
+  if (speed > 1) {
+    const normVel = velocity.clone().normalize();
+    const targetPitch = Math.asin(-normVel.y);
+    pitch += (targetPitch - pitch) * dt * 0.5;
+  }
+
+  // Altitude check - terrain collision
+  const terrainHeight = getTerrainHeight(plane.position.x, plane.position.z);
+  if (plane.position.y < terrainHeight + 5) {
+    plane.position.y = terrainHeight + 5;
+    velocity.y = Math.max(velocity.y, 0);
+  }
+
+  // Roll/pitch from keys
+  const rollSpeed = 1.5;
+  const pitchSpeed = 1.2;
+  const yawSpeed = 0.8;
+  if (keys['arrowleft']) roll += rollSpeed * dt;
+  if (keys['arrowright']) roll -= rollSpeed * dt;
+  if (keys['arrowup']) pitch += pitchSpeed * dt;
+  if (keys['arrowdown']) pitch -= pitchSpeed * dt;
+
+  // Clamp
+  roll = Math.max(-1.5, Math.min(1.5, roll));
+  pitch = Math.max(-0.8, Math.min(0.8, pitch));
+
+  // Apply rotation
+  plane.rotation.order = 'YXZ';
+  plane.rotation.y = yaw;
+  plane.rotation.x = pitch;
+  plane.rotation.z = -roll;
+
+  // Bank turns
+  yaw -= roll * dt * 0.3;
+
+  // Throttle
+  if (keys['w']) throttle = Math.min(1, throttle + dt * 0.3);
+  if (keys['s']) throttle = Math.max(0, throttle - dt * 0.2);
+
+  // Reset
+  if (keys[' ']) {
+    plane.position.set(0, 500, 0);
+    velocity.set(0, 0, 0);
+    yaw = 0; pitch = 0; roll = 0;
+    throttle = 0.3;
+    cameraMode = 0;
+    keys[' '] = false;
+  }
+
+  // Camera toggle
+  if (keys['c']) {
+    cameraMode = 1 - cameraMode;
+    keys['c'] = false;
+  }
+
+  updateCamera();
+
+  // Update HUD
+  const alt = Math.max(0, plane.position.y - terrainHeight);
+  document.getElementById('alt').textContent = Math.round(alt);
+  document.getElementById('spd').textContent = Math.round(speed * 10);
+  document.getElementById('vs').textContent = Math.round(velocity.y * 10);
+  document.getElementById('pitch').textContent = (pitch * 180 / Math.PI).toFixed(1);
+  document.getElementById('roll').textContent = (roll * 180 / Math.PI).toFixed(1);
+  document.getElementById('hdg').textContent = ((yaw * 180 / Math.PI) % 360).toFixed(0);
+  document.getElementById('thr').textContent = Math.round(throttle * 100);
+}
+
+function getTerrainHeight(x, z) {
+  if (!terrainMesh) return 0;
+  const geo = terrainMesh.geometry;
+  const pos = geo.attributes.position;
+  // Simple formula based on terrain gen
+  let h = 0;
+  h += Math.sin(x * 0.01) * Math.cos(z * 0.01) * 200;
+  h += Math.sin(x * 0.02 + 1.3) * Math.cos(z * 0.017) * 80;
+  h += Math.sin(x * 0.05 + 2.1) * Math.cos(z * 0.04) * 20;
+  return Math.max(0, h);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updatePhysics(dt);
+  renderer.render(scene, camera);
+}
+
+init();
+</script>
+</body>
+</html>
