@@ -732,7 +732,7 @@ function init() {
 }
 
 // --- WebRTC Peer Connection ---
-function initWebRTC() {
+async function initWebRTC() {
   // Create RTCPeerConnection for each client
   pc = new RTCPeerConnection();
   pc.createDataChannel('game-data');
