@@ -18,7 +18,7 @@ This project provides a lightweight, web-based flight simulator that runs direct
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Pitch up / down |
+| ↑ / ↓ | Pitch up / down (nose follows the stick) |
 | ← / → | Roll left / right |
 | W | Increase throttle |
 | S | Decrease throttle |
