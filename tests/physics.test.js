@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { resetFlightState, stepFlight, rotateBody, axes, aerodynamicForces } from '../js/physics.js';
+import { resetFlightState, stepFlight, rotateBody, axes, aerodynamicForces, controlAuthority } from '../js/physics.js';
 const run = (s, seconds, input = {}) => { for (let i = 0; i < seconds * 120; i++) stepFlight(s, input, 1 / 120); return s; };
 const level = () => { const s = resetFlightState(); s.quaternion.identity(); s.position.y = 2000; return s; };
 test('positive local X and up control pitch -Z nose upward', () => {
@@ -87,4 +87,59 @@ test('actual sustained flight controls complete loops and rolls without attitude
     assert.ok(total > 2 * Math.PI, `${mode} rotated ${total} radians`);
     assert.ok(!s.grounded);
   }
+});
+
+test('safe touchdown is undamaged; hard and belly touchdowns damage components', () => {
+  const land = (sink, gear = true) => { const s = level(); s.position.y = gear ? 0.99 : 0.41; s.velocity.set(0, -sink, -30); s.gearDown = gear; stepFlight(s, {}, 1/120); return s; };
+  assert.ok(Object.values(land(2).health).every(v => v === 1));
+  const hard = land(8); assert.ok(hard.health.gear < 0.5 && hard.health.leftWing < 1); assert.equal(hard.crashed, false);
+  const belly = land(2, false); assert.ok(belly.health.engine < 0.7); assert.match(belly.damageCause, /BELLY/);
+});
+test('overspeed and excessive G need sustained exposure, not a single frame', () => {
+  const hold = (s, speed, alpha, seconds) => { for(let i=0;i<seconds*120;i++) { s.velocity.set(0,0,-speed); s.quaternion.identity(); rotateBody(s,alpha,0); stepFlight(s,{},1/120); } };
+  const fast = level(); hold(fast, 120, 0, 0.5); assert.equal(fast.health.leftWing,1);
+  hold(fast,120,0,1); assert.ok(fast.health.leftWing < 0.95); assert.equal(fast.damageCause,'OVERSPEED');
+  for(const alpha of [0.25,-0.25]) { const g=level(); hold(g,90,alpha,0.2); assert.equal(g.health.leftWing,1); hold(g,90,alpha,1); assert.ok(g.health.leftWing<0.9); assert.equal(g.damageCause,'EXCESSIVE G'); }
+});
+test('asymmetric wing loss halves lift and rolls toward failed wing', () => {
+  for(const part of ['leftWing','rightWing']) {
+    const s=level(), intact=aerodynamicForces(s).lift.length(); s.health[part]=0;
+    assert.ok(Math.abs(aerodynamicForces(s).lift.length()/intact-0.5)<1e-10);
+    stepFlight(s,{},1/120); assert.ok(axes(s).right.y * (part==='leftWing'?-1:1)>0);
+  }
+});
+test('dynamic pressure and separated flow limit actual controls; failed surfaces and engine respond less', () => {
+  const s=level(); s.velocity.set(0,0,0); assert.equal(controlAuthority(s),0);
+  const q=s.quaternion.clone(); stepFlight(s,{pitch:1,roll:1},1/120); assert.ok(s.quaternion.angleTo(q)<1e-8);
+  s.velocity.set(0,0,-10); const low=controlAuthority(s); s.velocity.set(0,0,-52); const full=controlAuthority(s); assert.ok(low<full/10);
+  rotateBody(s,0.8,0); assert.ok(controlAuthority(s)<full/2);
+  const healthy=level(), damaged=level(); damaged.health.elevator=0; damaged.health.ailerons=0; damaged.health.rudder=0;
+  stepFlight(healthy,{pitch:1,roll:1},1/120); stepFlight(damaged,{pitch:1,roll:1},1/120);
+  assert.ok(axes(healthy).forward.y>0); assert.equal(axes(damaged).forward.y,0); assert.equal(axes(damaged).right.y,0);
+  const powered=level(), dead=level(); dead.health.engine=0; run(powered,1); run(dead,1); assert.ok(powered.airspeed>dead.airspeed+2);
+});
+test('destroyed controls cannot auto-level or taxi-steer; crash latches until reset', () => {
+  const s=level(); s.position.y=0.98; s.grounded=true; s.velocity.set(0,0,-8); s.throttle=0; rotateBody(s,0,0.1);
+  s.health.elevator=0; s.health.ailerons=0; s.health.rudder=0; const q=s.quaternion.clone(); run(s,0.1,{roll:1}); assert.ok(q.angleTo(s.quaternion)<1e-7);
+  const crash=level(); crash.position.y=1; crash.velocity.set(0,-20,-40); stepFlight(crash,{},1/120); assert.equal(crash.crashed,true);
+  const pos=crash.position.clone(); crash.gearDown=false; run(crash,10,{throttle:1,pitch:1,roll:1}); assert.equal(crash.position.distanceTo(pos),0); assert.equal(crash.airspeed,0);
+  resetFlightState(crash); assert.equal(crash.crashed,false); assert.equal(crash.damageCause,''); assert.equal(crash.gExposure,0); assert.equal(crash.overspeedExposure,0); assert.ok(Object.values(crash.health).every(v=>v===1));
+});
+test('damage exposure and consequences are frame-partition consistent', () => {
+  const a=level(), b=level(); a.velocity.z=b.velocity.z=-140;
+  run(a,2); for(let i=0;i<60;i++) stepFlight(b,{},1/30);
+  assert.ok(a.health.leftWing<1); assert.deepEqual(a.health,b.health); assert.ok(a.position.distanceTo(b.position)<1e-7);
+});
+test('rising terrain uses closure speed and severe attitude contact crashes', () => {
+  const hill=level(); hill.position.set(0,1,0); hill.velocity.set(0,0,-40);
+  stepFlight(hill,{},1/120, (x,z)=>-z); assert.equal(hill.crashed,true);
+  const inverted=level(); inverted.position.y=0.99; inverted.velocity.set(0,-2,-30); rotateBody(inverted,0,Math.PI);
+  stepFlight(inverted,{},1/120); assert.equal(inverted.crashed,true);
+});
+test('low-speed and post-stall roll inputs produce less rotation in the actual step', () => {
+  const response = (speed, alpha) => {
+    const a=level(), b=level(); for(const s of [a,b]) {s.velocity.set(0,0,-speed);rotateBody(s,alpha,0);}
+    stepFlight(a,{roll:1},1/120); stepFlight(b,{},1/120); return a.quaternion.angleTo(b.quaternion);
+  };
+  const attached=response(52,0); assert.ok(response(10,0)<attached/10); assert.ok(response(52,0.8)<attached/2);
 });

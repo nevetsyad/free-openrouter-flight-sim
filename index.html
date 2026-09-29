@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Free OpenRouter Flight Sim</title>
-<!-- flightsim-build:2026-09-29-v6 -->
+<!-- flightsim-build:2026-09-29-v7 -->
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
@@ -43,6 +43,11 @@
   <div>HDG: <span id="hdg">0</span>°</div>
   <div>THR: <span id="thr">0</span>%</div>
   <div>GEAR: <span id="gear">DOWN</span></div>
+  <div>WINGS L/R: <span id="wings">100 / 100</span>%</div>
+  <div>ELEV / AIL / RUD: <span id="surfaces">100 / 100 / 100</span>%</div>
+  <div>ENGINE / GEAR: <span id="systems">100 / 100</span>%</div>
+  <div>G: <span id="load">1.0</span> · <span id="warning">OK</span></div>
+  <div id="damage" style="color:#ff9966"></div>
   <div>STALL: <span id="stall">NO</span></div>
 </div>
 <div id="controls">↑/↓ Pitch/Loops · ←/→ Roll/Turn · W/S Throttle · G Gear · C Camera · Space Reset</div>
@@ -66,7 +71,7 @@ import * as THREE from 'three';
 import { resetFlightState, stepFlight, attitude } from './js/physics.js';
 const flight = resetFlightState();
 
-const BUILD = '2026-09-29-v6';
+const BUILD = '2026-09-29-v7';
 const TERRAIN_SIZE = 8000;
 const TERRAIN_SEG = 160;
 
@@ -140,16 +145,20 @@ function createAircraft() {
   fuselageGeo.rotateX(Math.PI / 2);
   group.add(new THREE.Mesh(fuselageGeo, bodyMat));
 
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.08, 1.15), bodyMat);
-  wing.position.set(0, 0.05, 0.2);
-  group.add(wing);
+  const damageMeshes = {};
+  for (const [part, x] of [['leftWing', -1.55], ['rightWing', 1.55]]) {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.08, 1.15), bodyMat.clone());
+    wing.position.set(x, 0.05, 0.2); group.add(wing); damageMeshes[part] = wing;
+  }
 
   const tail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.7), bodyMat);
   tail.position.set(0, 0.15, 1.7);
+  tail.material = bodyMat.clone(); damageMeshes.elevator = tail;
   group.add(tail);
 
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.9, 0.7), bodyMat);
   fin.position.set(0, 0.55, 1.7);
+  fin.material = bodyMat.clone(); damageMeshes.rudder = fin;
   group.add(fin);
 
   const engGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.7, 8);
@@ -186,6 +195,7 @@ function createAircraft() {
   addGear(-1.25, 0.55, 0.72);
   addGear(1.25, 0.55, 0.72);
   group.userData.gearMeshes = gearMeshes;
+  group.userData.damageMeshes = damageMeshes;
 
   group.position.set(0, 220, 0);
   scene.add(group);
@@ -216,6 +226,12 @@ function setGear(down) {
 function syncAircraft() {
   plane.position.copy(flight.position);
   plane.quaternion.copy(flight.quaternion);
+  for (const [part, mesh] of Object.entries(plane.userData.damageMeshes)) {
+    const health = flight.health[part];
+    mesh.material.color.setHex(0x702820).lerp(new THREE.Color(0xd8dde6), health);
+    mesh.visible = health > 0.02;
+  }
+  plane.userData.gearMeshes.forEach(mesh => { mesh.visible = flight.gearDown && flight.health.gear > 0.2; });
 }
 function resetFlight() {
   resetFlightState(flight);
@@ -242,7 +258,13 @@ function updatePhysics(dt) {
     roll: (angles.roll * 180 / Math.PI).toFixed(1),
     hdg: (angles.heading * 180 / Math.PI).toFixed(0),
     thr: Math.round(flight.throttle * 100),
-    gear: flight.gearDown ? 'DOWN' : 'UP', stall: flight.stalled ? 'YES' : 'NO'
+    wings: [flight.health.leftWing, flight.health.rightWing].map(v => Math.round(v * 100)).join(' / '),
+    surfaces: ['elevator', 'ailerons', 'rudder'].map(k => Math.round(flight.health[k] * 100)).join(' / '),
+    systems: ['engine', 'gear'].map(k => Math.round(flight.health[k] * 100)).join(' / '),
+    load: flight.loadFactor.toFixed(1),
+    warning: flight.crashed ? 'CRASHED' : flight.airspeed > 100 ? 'OVERSPEED' : flight.loadFactor > 6 || flight.loadFactor < -3 ? 'OVERLOAD' : flight.stalled ? 'STALL' : 'OK',
+    damage: flight.damageCause,
+    gear: flight.health.gear <= 0.2 ? 'BROKEN' : flight.gearDown ? 'DOWN' : 'UP', stall: flight.stalled ? 'YES' : 'NO'
   };
   for (const [id, value] of Object.entries(values)) document.getElementById(id).textContent = value;
 }
