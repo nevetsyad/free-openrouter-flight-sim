@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Free OpenRouter Flight Sim</title>
-<!-- flightsim-build:2026-09-29-v3 -->
+<!-- flightsim-build:2026-09-29-v4 -->
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
@@ -42,8 +42,9 @@
   <div>ROLL: <span id="roll">0</span>°</div>
   <div>HDG: <span id="hdg">0</span>°</div>
   <div>THR: <span id="thr">0</span>%</div>
+  <div>GEAR: <span id="gear">DOWN</span></div>
 </div>
-<div id="controls">↑/↓ Pitch · ←/→ Roll · W/S Throttle · C Camera · Space Reset</div>
+<div id="controls">↑/↓ Pitch · ←/→ Roll · W/S Throttle · G Gear · C Camera · Space Reset</div>
 <div id="overlay">
   <div class="card">
     <h1>✈ FREE OPENROUTER FLIGHT SIM</h1>
@@ -62,7 +63,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const BUILD = '2026-09-29-v3';
+const BUILD = '2026-09-29-v4';
 const TERRAIN_SIZE = 8000;
 const TERRAIN_SEG = 160;
 
@@ -72,6 +73,7 @@ let velocity = new THREE.Vector3();
 let throttle = 0.62;
 let airspeed = 52;
 let pitch = 0.04, roll = 0, yaw = 0;
+let gearDown = true;
 let cameraMode = 0;
 let keys = {};
 let started = false;
@@ -167,6 +169,26 @@ function createAircraft() {
   cockpit.position.set(0, 0.32, -0.35);
   group.add(cockpit);
 
+  // Retractable tricycle landing gear.
+  const gearMeshes = [];
+  const strutMat = new THREE.MeshPhongMaterial({ color: 0x777777 });
+  const wheelMat = new THREE.MeshPhongMaterial({ color: 0x151515 });
+  const addGear = (x, z, length) => {
+    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, length, 8), strutMat);
+    strut.position.set(x, -length / 2, z);
+    strut.rotation.z = Math.PI / 2;
+    group.add(strut);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.055, 8, 16), wheelMat);
+    wheel.position.set(x, -length - 0.04, z);
+    wheel.rotation.y = Math.PI / 2;
+    group.add(wheel);
+    gearMeshes.push(strut, wheel);
+  };
+  addGear(0, -0.45, 0.55);
+  addGear(-1.25, 0.55, 0.72);
+  addGear(1.25, 0.55, 0.72);
+  group.userData.gearMeshes = gearMeshes;
+
   group.position.set(0, 220, 0);
   scene.add(group);
   return group;
@@ -194,6 +216,15 @@ function updateCamera() {
   }
 }
 
+function setGear(down) {
+  gearDown = down;
+  if (plane?.userData.gearMeshes) {
+    plane.userData.gearMeshes.forEach(mesh => { mesh.visible = gearDown; });
+  }
+  const gearEl = document.getElementById('gear');
+  if (gearEl) gearEl.textContent = gearDown ? 'DOWN' : 'UP';
+}
+
 function resetFlight() {
   plane.position.set(0, 220, 0);
   pitch = 0.04;
@@ -201,6 +232,7 @@ function resetFlight() {
   yaw = 0;
   throttle = 0.62;
   airspeed = 52;
+  setGear(true);
   applyAttitude();
   velocity.copy(forwardVector().multiplyScalar(airspeed));
   cameraMode = 0;
@@ -211,8 +243,9 @@ function updatePhysics(dt) {
   const rollRate = 1.1;
   if (keys['arrowup']) pitch += pitchRate * dt;
   if (keys['arrowdown']) pitch -= pitchRate * dt;
-  if (keys['arrowleft']) roll -= rollRate * dt;
-  if (keys['arrowright']) roll += rollRate * dt;
+  // Reversed roll mapping: left rolls left, right rolls right.
+  if (keys['arrowleft']) roll += rollRate * dt;
+  if (keys['arrowright']) roll -= rollRate * dt;
   if (!keys['arrowleft'] && !keys['arrowright']) roll *= Math.exp(-dt * 0.6);
 
   pitch = Math.max(-0.7, Math.min(0.6, pitch));
@@ -222,8 +255,14 @@ function updatePhysics(dt) {
 
   if (keys['w']) throttle = Math.min(1, throttle + dt * 0.28);
   if (keys['s']) throttle = Math.max(0, throttle - dt * 0.28);
+  if (keys['g']) {
+    setGear(!gearDown);
+    keys['g'] = false;
+  }
 
   const targetSpeed = 18 + throttle * 62;
+  const gearDrag = gearDown ? 0.88 : 1;
+  airspeed *= Math.pow(gearDrag, dt);
   const stalling = airspeed < 26 && pitch > 0.25;
   airspeed += (targetSpeed - airspeed) * Math.min(1, dt * (stalling ? 0.35 : 0.8));
   if (pitch > 0.15) airspeed -= pitch * dt * 6;
@@ -238,12 +277,19 @@ function updatePhysics(dt) {
   velocity.lerp(desired, 1 - Math.exp(-dt * 2.4));
   plane.position.add(velocity.clone().multiplyScalar(dt));
 
-  const ground = terrainHeightAt(plane.position.x, plane.position.z) + 2.5;
-  if (plane.position.y < ground) {
+  const groundClearance = gearDown ? 2.15 : 0.85;
+  const ground = terrainHeightAt(plane.position.x, plane.position.z) + groundClearance;
+  if (plane.position.y <= ground) {
     plane.position.y = ground;
+    // Gear-down landings settle onto the runway/terrain instead of bouncing.
+    // A belly landing is also survivable, but bleeds speed more aggressively.
     if (velocity.y < 0) velocity.y = 0;
-    airspeed *= 0.98;
+    airspeed *= Math.pow(gearDown ? 0.985 : 0.94, dt * 60);
     pitch = Math.max(pitch, 0.02);
+    if (airspeed < (gearDown ? 22 : 12)) {
+      velocity.multiplyScalar(0.96);
+      airspeed *= 0.96;
+    }
   }
 
   if (keys[' ']) {
@@ -266,6 +312,7 @@ function updatePhysics(dt) {
   if (hdg < 0) hdg += 360;
   document.getElementById('hdg').textContent = hdg.toFixed(0);
   document.getElementById('thr').textContent = Math.round(throttle * 100);
+  document.getElementById('gear').textContent = gearDown ? 'DOWN' : 'UP';
 }
 
 function animate() {
@@ -301,6 +348,7 @@ function init() {
 
   createTerrain();
   plane = createAircraft();
+  setGear(true);
   applyAttitude();
   velocity.copy(forwardVector().multiplyScalar(airspeed));
 
